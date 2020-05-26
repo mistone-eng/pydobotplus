@@ -1,5 +1,7 @@
 import struct
 import threading
+import math
+from typing import NamedTuple
 
 import serial
 from serial.tools import list_ports
@@ -26,6 +28,20 @@ MM_PER_CIRCLE = 3.1415926535898 * 36.0
 
 class DobotException(Exception):
     pass
+
+
+class Position(NamedTuple):
+
+    x: float
+    y: float
+    z: float
+
+class Joints(NamedTuple):
+
+    j1: float
+    j2: float
+    j3: float
+    j4: float
 
 
 class Dobot:
@@ -124,9 +140,6 @@ class Dobot:
         self.j2 = struct.unpack_from('f', response.params, 20)[0]
         self.j3 = struct.unpack_from('f', response.params, 24)[0]
         self.j4 = struct.unpack_from('f', response.params, 28)[0]
-        if self.verbose:
-            print("pydobot: x:%03.1f y:%03.1f z:%03.1f r:%03.1f j1:%03.1f j2:%03.1f j3:%03.1f j4:%03.1f" %
-                  (self.x, self.y, self.z, self.r, self.j1, self.j2, self.j3, self.j4))
         return response
 
     def _set_cp_cmd(self, x, y, z):
@@ -308,6 +321,78 @@ class Dobot:
         msg.params.extend(bytearray(struct.pack('f', r)))
         return self._send_command(msg)
 
+    def _set_jog_coordinate_params(self, vx, vy, vz, vr, ax=100, ay=100, az=100, ar=100):
+        msg = Message()
+        msg.id = 71
+        msg.ctrl = 0x03
+        msg.params = bytearray([])
+        msg.params.extend(bytearray(struct.pack('f', vx)))
+        msg.params.extend(bytearray(struct.pack('f', vy)))
+        msg.params.extend(bytearray(struct.pack('f', vz)))
+        msg.params.extend(bytearray(struct.pack('f', vr)))
+        msg.params.extend(bytearray(struct.pack('f', ax)))
+        msg.params.extend(bytearray(struct.pack('f', ay)))
+        msg.params.extend(bytearray(struct.pack('f', az)))
+        msg.params.extend(bytearray(struct.pack('f', ar)))
+        return self._send_command(msg)
+
+    def _set_jog_command(self, cmd):
+        msg = Message()
+        msg.id = 73
+        msg.ctrl = 0x03
+        msg.params = bytearray([])
+        msg.params.extend(bytearray([0x0]))
+        msg.params.extend(bytearray([cmd]))
+        return self._send_command(msg)
+
+    def jog_x(self, v):
+
+        self._set_jog_coordinate_params(abs(v), 0, 0, 0,)
+        if v > 0:
+            cmd = 1
+        elif v < 0:
+            cmd = 2
+        else:
+            cmd = 0
+
+        self.wait_for_cmd(self._extract_cmd_index(self._set_jog_command(cmd)))
+
+    def jog_y(self, v):
+
+        self._set_jog_coordinate_params(0, abs(v), 0, 0)
+        if v > 0:
+            cmd = 3
+        elif v < 0:
+            cmd = 4
+        else:
+            cmd = 0
+
+        self.wait_for_cmd(self._extract_cmd_index(self._set_jog_command(cmd)))
+
+    def jog_z(self, v):
+
+        self._set_jog_coordinate_params(0, 0, abs(v), 0)
+        if v > 0:
+            cmd = 5
+        elif v < 0:
+            cmd = 6
+        else:
+            cmd = 0
+
+        self.wait_for_cmd(self._extract_cmd_index(self._set_jog_command(cmd)))
+
+    def jog_r(self, v):
+
+        self._set_jog_coordinate_params(0, 0, 0, abs(v))
+        if v > 0:
+            cmd = 7
+        elif v < 0:
+            cmd = 8
+        else:
+            cmd = 0
+
+        self.wait_for_cmd(self._extract_cmd_index(self._set_jog_command(cmd)))
+
     def move_to(self, x, y, z, r=0., mode=MODE_PTP_MOVJ_XYZ):
         return self._extract_cmd_index(self._set_ptp_cmd(x, y, z, r, mode))
 
@@ -333,17 +418,17 @@ class Dobot:
         self.wait_for_cmd(self._extract_cmd_index(self._set_ptp_common_params(velocity, acceleration)))
         self.wait_for_cmd(self._extract_cmd_index(self._set_ptp_coordinate_params(velocity, acceleration)))
 
-    def pose(self):
-        response = self._get_pose()
-        x = struct.unpack_from('f', response.params, 0)[0]
-        y = struct.unpack_from('f', response.params, 4)[0]
-        z = struct.unpack_from('f', response.params, 8)[0]
-        r = struct.unpack_from('f', response.params, 12)[0]
-        j1 = struct.unpack_from('f', response.params, 16)[0]
-        j2 = struct.unpack_from('f', response.params, 20)[0]
-        j3 = struct.unpack_from('f', response.params, 24)[0]
-        j4 = struct.unpack_from('f', response.params, 28)[0]
-        return x, y, z, r, j1, j2, j3, j4
+    def position(self) -> Position:
+        self._get_pose()
+        return Position(self.x, self.y, self.z)
+
+    def joints(self, in_radians=False) -> Joints:
+        self._get_pose()
+
+        if in_radians:
+            return Joints(math.radians(self.j1), math.radians(self.j2), math.radians(self.j3), math.radians(self.j4))
+
+        return Joints(self.j1, self.j2, self.j3, self.j4)
 
     def conveyor_belt(self, speed, direction=1, interface=0):
         if 0.0 <= speed <= 1.0 and (direction == 1 or direction == -1):
@@ -439,7 +524,7 @@ class Dobot:
         >>> im = im.convert("L")
         >>> im = np.array(im)
 
-        >>> x, y = d.pose()[0:2]
+        >>> x, y = d.position()[0:2]
         >>> d.wait_for_cmd(d.move_to(x, y, -74.0))
 
         >>> d.engrave(im, 0.1)
@@ -449,7 +534,7 @@ class Dobot:
         image = 255.0 - image
         image = (image - image.min()) / (image.max() - image.min()) * (high - low) + low
 
-        x, y, z = self.pose()[0:3]  # get current/starting position
+        x, y, z = self.position()[0:3]  # get current/starting position
 
         self.wait_for_cmd(self.laze(0, False))
         self._set_queued_cmd_clear()
@@ -492,19 +577,3 @@ class Dobot:
                     self.wait_for_cmd(indexes.popleft())
 
         self.wait_for_cmd(self.laze(0, False))
-
-
-if __name__ == '__main__':
-    d = Dobot()
-
-    from PIL import Image
-    import numpy as np
-
-    im = Image.open("pasovka.jpg")
-    im = im.convert("L")
-    im = np.array(im)
-
-    x, y = d.pose()[0:2]
-    d.wait_for_cmd(d.move_to(x, y, -74.0))
-
-    d.engrave(im, 0.05, 0, 40, 100, 100, 100)
