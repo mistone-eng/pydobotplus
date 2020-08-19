@@ -205,11 +205,15 @@ class Dobot:
             else:
                 raise DobotException("Device not found!")
 
-        self.ser = serial.Serial(port,
-                                 baudrate=115200,
-                                 parity=serial.PARITY_NONE,
-                                 stopbits=serial.STOPBITS_ONE,
-                                 bytesize=serial.EIGHTBITS)
+        try:
+            self.ser = serial.Serial(
+                port,
+                baudrate=115200,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                bytesize=serial.EIGHTBITS)
+        except serial.serialutil.SerialException as e:
+            raise DobotException from e
 
         self.logger.debug('pydobot: %s open' % self.ser.name if self.ser.isOpen() else 'failed to open serial port')
 
