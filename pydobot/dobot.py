@@ -1,7 +1,8 @@
 import struct
-import threading
 import math
-from typing import NamedTuple
+import logging
+from enum import IntEnum
+from typing import NamedTuple, Set, Optional
 
 import serial
 from serial.tools import list_ports
@@ -11,16 +12,20 @@ from pydobot.message import Message
 
 MAX_QUEUE_LEN = 32
 
-MODE_PTP_JUMP_XYZ = 0x00
-MODE_PTP_MOVJ_XYZ = 0x01
-MODE_PTP_MOVL_XYZ = 0x02
-MODE_PTP_JUMP_ANGLE = 0x03
-MODE_PTP_MOVJ_ANGLE = 0x04
-MODE_PTP_MOVL_ANGLE = 0x05
-MODE_PTP_MOVJ_INC = 0x06
-MODE_PTP_MOVL_INC = 0x07
-MODE_PTP_MOVJ_XYZ_INC = 0x08
-MODE_PTP_JUMP_MOVL_XYZ = 0x09
+
+class MODE_PTP(IntEnum):
+
+    JUMP_XYZ = 0x00
+    MOVJ_XYZ = 0x01
+    MOVL_XYZ = 0x02
+    JUMP_ANGLE = 0x03
+    MOVJ_ANGLE = 0x04
+    MOVL_ANGLE = 0x05
+    MOVJ_INC = 0x06
+    MOVL_INC = 0x07
+    MOVJ_XYZ_INC = 0x08
+    JUMP_MOVL_XYZ = 0x09
+
 
 STEP_PER_CIRCLE = 360.0 / 1.8 * 10.0 * 16.0
 MM_PER_CIRCLE = 3.1415926535898 * 36.0
@@ -35,6 +40,8 @@ class Position(NamedTuple):
     x: float
     y: float
     z: float
+    r: float
+
 
 class Joints(NamedTuple):
 
@@ -43,21 +50,156 @@ class Joints(NamedTuple):
     j3: float
     j4: float
 
+    def in_radians(self) -> "Joints":
+        return Joints(math.radians(self.j1), math.radians(self.j2), math.radians(self.j3), math.radians(self.j4))
+
+
+class Pose(NamedTuple):
+
+    position: Position
+    joints: Joints
+
+
+class Alarm(IntEnum):
+
+    COMMON_RESETTING = 0x00,
+    COMMON_UNDEFINED_INSTRUCTION = 0x01,
+    COMMON_FILE_SYSTEM = 0x02,
+    COMMON_MCU_FPGA_COMM = 0x03,
+    COMMON_ANGLE_SENSOR = 0x04
+
+    PLAN_INV_SINGULARITY = 0x10,
+    PLAN_INV_CALC = 0x11,
+    PLAN_INV_LIMIT = 0x12, # !!!
+    PLAN_PUSH_DATA_REPEAT = 0x13,
+    PLAN_ARC_INPUT_PARAM = 0x14,
+    PLAN_JUMP_PARAM = 0x15,
+    PLAN_LINE_HAND = 0x16,
+    PLAN_LINE_OUT_SPACE = 0x17,
+    PLAN_ARC_OUT_SPACE = 0x18,
+    PLAN_MOTIONTYPE = 0x19,
+    PLAN_SPEED_INPUT_PARAM = 0x1A,
+    PLAN_CP_CALC = 0x1B,
+
+    MOVE_INV_SINGULARITY = 0x20,
+    MOVE_INV_CALC = 0x21,
+    MOVE_INV_LIMIT = 0x22,
+
+    OVERSPEED_AXIS1 = 0x30,
+    OVERSPEED_AXIS2 = 0x31,
+    OVERSPEED_AXIS3 = 0x32,
+    OVERSPEED_AXIS4 = 0x33,
+
+    LIMIT_AXIS1_POS = 0x40,
+    LIMIT_AXIS1_NEG = 0x41,
+    LIMIT_AXIS2_POS = 0x42,
+    LIMIT_AXIS2_NEG = 0x43,
+    LIMIT_AXIS3_POS = 0x44,
+    LIMIT_AXIS3_NEG = 0x45,
+    LIMIT_AXIS4_POS = 0x46,
+    LIMIT_AXIS4_NEG = 0x47,
+    LIMIT_AXIS23_POS = 0x48,
+    LIMIT_AXIS23_NEG = 0x49
+
+    LOSE_STEP_AXIS1 = 0x50,
+    LOSE_STEP_AXIS2 = 0x51
+    LOSE_STEP_AXIS3 = 0x52
+    LOSE_STEP_AXIS4 = 0x53
+
+    OTHER_AXIS1_DRV_ALARM = 0x60,
+    OTHER_AXIS1_OVERFLOW = 0x61,
+    OTHER_AXIS1_FOLLOW = 0x62,
+    OTHER_AXIS2_DRV_ALARM = 0x63,
+    OTHER_AXIS2_OVERFLOW = 0x64,
+    OTHER_AXIS2_FOLLOW = 0x65,
+    OTHER_AXIS3_DRV_ALARM = 0x66,
+    OTHER_AXIS3_OVERFLOW = 0x67,
+    OTHER_AXIS3_FOLLOW = 0x68,
+    OTHER_AXIS4_DRV_ALARM = 0x69,
+    OTHER_AXIS4_OVERFLOW = 0x6A,
+    OTHER_AXIS4_FOLLOW = 0x6B,
+
+    MOTOR_REAR_ENCODER = 0x70,
+    MOTOR_REAR_TEMPERATURE_HIGH = 0x71
+    MOTOR_REAR_TEMPERATURE_LOW = 0x72,
+    MOTOR_REAR_LOCK_CURRENT = 0x73,
+    MOTOR_REAR_BUSV_HIGH = 0x74,
+    MOTOR_REAR_BUSV_LOW = 0x75,
+    MOTOR_REAR_OVERHEAT = 0x76,
+    MOTOR_REAR_RUNAWAY = 0x77,
+    MOTOR_REAR_BATTERY_LOW = 0x78,
+    MOTOR_REAR_PHASE_SHORT = 0x79,
+    MOTOR_REAR_PHASE_WRONG = 0x7A,
+    MOTOR_REAR_LOST_SPEED = 0x7B,
+    MOTOR_REAR_NOT_STANDARDIZE = 0x7C,
+    ENCODER_REAR_NOT_STANDARDIZE = 0x7D,
+    MOTOR_REAR_CAN_BROKE = 0x7E,
+
+    MOTOR_FRONT_ENCODER = 0x80,
+    MOTOR_FRONT_TEMPERATURE_HIGH = 0x81,
+    MOTOR_FRONT_TEMPERATURE_LOW = 0x82,
+    MOTOR_FRONT_LOCK_CURRENT = 0x83,
+    MOTOR_FRONT_BUSV_HIGH = 0x84,
+    MOTOR_FRONT_BUSV_LOW = 0x85,
+    MOTOR_FRONT_OVERHEAT = 0x86,
+    MOTOR_FRONT_RUNAWAY = 0x87,
+    MOTOR_FRONT_BATTERY_LOW = 0x88,
+    MOTOR_FRONT_PHASE_SHORT = 0x89,
+    MOTOR_FRONT_PHASE_WRONG = 0x8A,
+    MOTOR_FRONT_LOST_SPEED = 0x8B,
+    MOTOR_FRONT_NOT_STANDARDIZE = 0x8C,
+    ENCODER_FRONT_NOT_STANDARDIZE = 0x8D,
+    MOTOR_FRONT_CAN_BROKE = 0x8E,
+
+    MOTOR_Z_ENCODER = 0x90,
+    MOTOR_Z_TEMPERATURE_HIGH = 0x91,
+    MOTOR_Z_TEMPERATURE_LOW = 0x92,
+    MOTOR_Z_LOCK_CURRENT = 0x93,
+    MOTOR_Z_BUSV_HIGH = 0x94,
+    MOTOR_Z_BUSV_LOW = 0x95,
+    MOTOR_Z_OVERHEAT = 0x96,
+    MOTOR_Z_RUNAWAY = 0x97,
+    MOTOR_Z_BATTERY_LOW = 0x98,
+    MOTOR_Z_PHASE_SHORT = 0x99,
+    MOTOR_Z_PHASE_WRONG = 0x9A,
+    MOTOR_Z_LOST_SPEED = 0x9B,
+    MOTOR_Z_NOT_STANDARDIZE = 0x9C,
+    ENCODER_Z_NOT_STANDARDIZE = 0x9D,
+    MOTOR_Z_CAN_BROKE = 0x9E,
+
+    MOTOR_R_ENCODER = 0xA0,
+    MOTOR_R_TEMPERATURE_HIGH = 0xA1,
+    MOTOR_R_TEMPERATURE_LOW = 0xA2,
+    MOTOR_R_LOCK_CURRENT = 0xA3,
+    MOTOR_R_BUSV_HIGH = 0xA4,
+    MOTOR_R_BUSV_LOW = 0xA5,
+    MOTOR_R_OVERHEAT = 0xA6,
+    MOTOR_R_RUNAWAY = 0xA7,
+    MOTOR_R_BATTERY_LOW = 0xA8,
+    MOTOR_R_PHASE_SHORT = 0xA9
+    MOTOR_R_PHASE_WRONG = 0xAA,
+    MOTOR_R_LOST_SPEED = 0xAB,
+    MOTOR_R_NOT_STANDARDIZE = 0xAC,
+    ENCODER_R_NOT_STANDARDIZE = 0xAD,
+    MOTOR_R_CAN_BROKE = 0xAE,
+
+    MOTOR_ENDIO_IO = 0xB0,
+    MOTOR_ENDIO_RS485_WRONG = 0xB1,
+    MOTOR_ENDIO_CAN_BROKE = 0xB2
+
 
 class Dobot:
 
-    def __init__(self, port=None, verbose=False):
+    def __init__(self, port: Optional[str] = None) -> None:
 
-        self.verbose = verbose
-        self.lock = threading.Lock()
+        self.logger = logging.Logger(__name__)
+
         if port is None:
             # Find the serial port
             ports = list_ports.comports()
             for thing in ports:
                 if thing.vid in (4292, 6790):
-                    if self.verbose:
-                        print("Found a com port to talk to DOBOT.")
-                        print(thing)
+                    self.logger.debug(f"Found a com port to talk to DOBOT ({thing}).")
                     port = thing.device
                     break
             else:
@@ -69,9 +211,7 @@ class Dobot:
                                  stopbits=serial.STOPBITS_ONE,
                                  bytesize=serial.EIGHTBITS)
 
-        if self.verbose:
-            is_open = self.ser.isOpen()
-            print('pydobot: %s open' % self.ser.name if is_open else 'failed to open serial port')
+        self.logger.debug('pydobot: %s open' % self.ser.name if self.ser.isOpen() else 'failed to open serial port')
 
         self._set_queued_cmd_start_exec()
         self._set_queued_cmd_clear()
@@ -79,27 +219,25 @@ class Dobot:
         self._set_ptp_coordinate_params(velocity=200, acceleration=200)
         self._set_ptp_jump_params(10, 200)
         self._set_ptp_common_params(velocity=100, acceleration=100)
-        self._get_pose()
 
-    def close(self):
-        with self.lock:
-            self.ser.close()
-            if self.verbose:
-                print('pydobot: %s closed' % self.ser.name)
+    def close(self) -> None:
+        self.ser.close()
+        self.logger.debug('pydobot: %s closed' % self.ser.name)
 
-    def _send_command(self, msg):
-        with self.lock:
-            self.ser.reset_input_buffer()
-            self._send_message(msg)
-            return self._read_message()
+    def _send_command(self, msg) -> Message:
+        self.ser.reset_input_buffer()
+        self._send_message(msg)
+        msg = self._read_message()
+        if msg is None:
+            raise DobotException("No response!")
+        return msg
 
-    def _send_message(self, msg):
+    def _send_message(self, msg) -> None:
 
-        if self.verbose:
-            print('pydobot: >>', msg)
+        self.logger.debug('pydobot: >>', msg)
         self.ser.write(msg.bytes())
 
-    def _read_message(self):
+    def _read_message(self) -> Optional[Message]:
 
         # Search for begin
         begin_found = False
@@ -120,27 +258,53 @@ class Dobot:
                 b.extend(bytearray([payload_length]))
                 b.extend(payload_checksum)
                 msg = Message(b)
-                if self.verbose:
-                    print('Lenght', payload_length)
-                    print(payload_checksum)
-                    print('MessageID:', payload_checksum[0])
-                    print('pydobot: <<', ":".join('{:02x}'.format(x) for x in b))
+                self.logger.debug('Lenght', payload_length)
+                self.logger.debug(payload_checksum)
+                self.logger.debug('MessageID:', payload_checksum[0])
+                self.logger.debug('pydobot: <<', ":".join('{:02x}'.format(x) for x in b))
                 return msg
-        return
+        return None
 
-    def _get_pose(self):
+    def get_pose(self) -> Pose:
         msg = Message()
         msg.id = 10
         response = self._send_command(msg)
-        self.x = struct.unpack_from('f', response.params, 0)[0]
-        self.y = struct.unpack_from('f', response.params, 4)[0]
-        self.z = struct.unpack_from('f', response.params, 8)[0]
-        self.r = struct.unpack_from('f', response.params, 12)[0]
-        self.j1 = struct.unpack_from('f', response.params, 16)[0]
-        self.j2 = struct.unpack_from('f', response.params, 20)[0]
-        self.j3 = struct.unpack_from('f', response.params, 24)[0]
-        self.j4 = struct.unpack_from('f', response.params, 28)[0]
-        return response
+
+        return Pose(
+            Position(
+                struct.unpack_from('f', response.params, 0)[0],
+                struct.unpack_from('f', response.params, 4)[0],
+                struct.unpack_from('f', response.params, 8)[0],
+                struct.unpack_from('f', response.params, 12)[0]
+            ),
+            Joints(
+                struct.unpack_from('f', response.params, 16)[0],
+                struct.unpack_from('f', response.params, 20)[0],
+                struct.unpack_from('f', response.params, 24)[0],
+                struct.unpack_from('f', response.params, 28)[0]
+            )
+        )
+
+    def get_alarms(self) -> Set[Alarm]:
+
+        msg = Message()
+        msg.id = 20
+        response = self._send_command(msg)  # 32 bytes
+
+        ret: Set[Alarm] = set()
+
+        for idx in range(16):
+            alarm_byte = struct.unpack_from('B', response.params, idx)[0]
+            for alarm_index in [i for i in range(alarm_byte.bit_length()) if alarm_byte & (1 << i)]:
+                ret.add(Alarm(idx*8+alarm_index))
+        return ret
+
+    def clear_alarms(self) -> None:
+
+        msg = Message()
+        msg.id = 20
+        msg.ctrl = 0x01
+        self._send_command(msg)  # empty response
 
     def _set_cp_cmd(self, x, y, z):
         msg = Message()
@@ -282,9 +446,8 @@ class Dobot:
     def wait_for_cmd(self, cmd_id):
         current_cmd_id = self._get_queued_cmd_current_index()
         while cmd_id > current_cmd_id:
-            if self.verbose:
-                print("Current-ID", current_cmd_id)
-                print("Waiting for", cmd_id)
+            self.logger.debug("Current-ID", current_cmd_id)
+            self.logger.debug("Waiting for", cmd_id)
 
             current_cmd_id = self._get_queued_cmd_current_index()
 
@@ -393,7 +556,7 @@ class Dobot:
 
         self.wait_for_cmd(self._extract_cmd_index(self._set_jog_command(cmd)))
 
-    def move_to(self, x, y, z, r=0., mode=MODE_PTP_MOVJ_XYZ):
+    def move_to(self, x, y, z, r=0., mode=MODE_PTP.MOVJ_XYZ):
         return self._extract_cmd_index(self._set_ptp_cmd(x, y, z, r, mode))
 
     def go_arc(self, x, y, z, r, cir_x, cir_y, cir_z, cir_r):
@@ -417,18 +580,6 @@ class Dobot:
     def speed(self, velocity=100., acceleration=100.):
         self.wait_for_cmd(self._extract_cmd_index(self._set_ptp_common_params(velocity, acceleration)))
         self.wait_for_cmd(self._extract_cmd_index(self._set_ptp_coordinate_params(velocity, acceleration)))
-
-    def position(self) -> Position:
-        self._get_pose()
-        return Position(self.x, self.y, self.z)
-
-    def joints(self, in_radians=False) -> Joints:
-        self._get_pose()
-
-        if in_radians:
-            return Joints(math.radians(self.j1), math.radians(self.j2), math.radians(self.j3), math.radians(self.j4))
-
-        return Joints(self.j1, self.j2, self.j3, self.j4)
 
     def conveyor_belt(self, speed, direction=1, interface=0):
         if 0.0 <= speed <= 1.0 and (direction == 1 or direction == -1):
@@ -524,7 +675,7 @@ class Dobot:
         >>> im = im.convert("L")
         >>> im = np.array(im)
 
-        >>> x, y = d.position()[0:2]
+        >>> x, y = d.get_pose().position[0:2]
         >>> d.wait_for_cmd(d.move_to(x, y, -74.0))
 
         >>> d.engrave(im, 0.1)
@@ -534,7 +685,7 @@ class Dobot:
         image = 255.0 - image
         image = (image - image.min()) / (image.max() - image.min()) * (high - low) + low
 
-        x, y, z = self.position()[0:3]  # get current/starting position
+        x, y, z = self.get_pose().position[0:3]  # get current/starting position
 
         self.wait_for_cmd(self.laze(0, False))
         self._set_queued_cmd_clear()
