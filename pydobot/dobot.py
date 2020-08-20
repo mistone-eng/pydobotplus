@@ -2,6 +2,7 @@ import struct
 import math
 import logging
 from enum import IntEnum
+from threading import RLock
 from typing import NamedTuple, Set, Optional
 
 import serial
@@ -193,6 +194,7 @@ class Dobot:
     def __init__(self, port: Optional[str] = None) -> None:
 
         self.logger = logging.Logger(__name__)
+        self._lock = RLock()
 
         if port is None:
             # Find the serial port
@@ -206,7 +208,7 @@ class Dobot:
                 raise DobotException("Device not found!")
 
         try:
-            self.ser = serial.Serial(
+            self._ser = serial.Serial(
                 port,
                 baudrate=115200,
                 parity=serial.PARITY_NONE,
@@ -215,7 +217,7 @@ class Dobot:
         except serial.serialutil.SerialException as e:
             raise DobotException from e
 
-        self.logger.debug('pydobot: %s open' % self.ser.name if self.ser.isOpen() else 'failed to open serial port')
+        self.logger.debug('pydobot: %s open' % self._ser.name if self._ser.isOpen() else 'failed to open serial port')
 
         self._set_queued_cmd_start_exec()
         self._set_queued_cmd_clear()
@@ -225,13 +227,15 @@ class Dobot:
         self._set_ptp_common_params(velocity=100, acceleration=100)
 
     def close(self) -> None:
-        self.ser.close()
-        self.logger.debug('pydobot: %s closed' % self.ser.name)
+        with self._lock:
+            self._ser.close()
+        self.logger.debug('pydobot: %s closed' % self._ser.name)
 
     def _send_command(self, msg) -> Message:
-        self.ser.reset_input_buffer()
-        self._send_message(msg)
-        msg = self._read_message()
+        with self._lock:
+            self._ser.reset_input_buffer()
+            self._send_message(msg)
+            msg = self._read_message()
         if msg is None:
             raise DobotException("No response!")
         return msg
@@ -239,7 +243,8 @@ class Dobot:
     def _send_message(self, msg) -> None:
 
         self.logger.debug('pydobot: >>', msg)
-        self.ser.write(msg.bytes())
+        with self._lock:
+            self._ser.write(msg.bytes())
 
     def _read_message(self) -> Optional[Message]:
 
@@ -248,15 +253,15 @@ class Dobot:
         last_byte = None
         tries = 5
         while not begin_found and tries > 0:
-            current_byte = ord(self.ser.read(1))
+            current_byte = ord(self._ser.read(1))
             if current_byte == 170:
                 if last_byte == 170:
                     begin_found = True
             last_byte = current_byte
             tries = tries - 1
         if begin_found:
-            payload_length = ord(self.ser.read(1))
-            payload_checksum = self.ser.read(payload_length + 1)
+            payload_length = ord(self._ser.read(1))
+            payload_checksum = self._ser.read(payload_length + 1)
             if len(payload_checksum) == payload_length + 1:
                 b = bytearray([0xAA, 0xAA])
                 b.extend(bytearray([payload_length]))
