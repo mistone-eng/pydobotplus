@@ -226,6 +226,12 @@ class Dobot:
         self._set_ptp_jump_params(10, 200)
         self._set_ptp_common_params(velocity=100, acceleration=100)
 
+        alarms = self.get_alarms()
+
+        if alarms:
+            self.logger.warning(f"Clearing alarms: {', '.join(map(str, alarms))}.")
+            self.clear_alarms()
+
     def close(self) -> None:
         with self._lock:
             self._ser.close()
