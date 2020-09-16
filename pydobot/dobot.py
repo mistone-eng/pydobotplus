@@ -571,6 +571,20 @@ class Dobot:
 
         self.wait_for_cmd(self._extract_cmd_index(self._set_jog_command(cmd)))
 
+    def set_io(self, address: int, state: bool):
+
+        if not 1 <= address <= 22:
+            raise DobotException("Invalid address range.")
+
+        msg = Message()
+        msg.id = 131
+        msg.ctrl = 0x03
+        msg.params = bytearray([])
+        msg.params.extend(bytearray(struct.pack('B', address)))
+        msg.params.extend(bytearray(struct.pack('B', int(state))))
+
+        self.wait_for_cmd(self._extract_cmd_index(self._send_command(msg)))
+
     def move_to(self, x, y, z, r=0., mode=MODE_PTP.MOVJ_XYZ):
         return self._extract_cmd_index(self._set_ptp_cmd(x, y, z, r, mode))
 
