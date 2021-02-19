@@ -585,6 +585,25 @@ class Dobot:
 
         self.wait_for_cmd(self._extract_cmd_index(self._send_command(msg)))
 
+    def set_hht_trig_output(self, state: bool) -> None:
+
+        msg = Message()
+        msg.id = 41
+        msg.ctrl = 0x02
+        msg.params = bytearray([])
+        msg.params.extend(bytearray(struct.pack('B', int(state))))
+
+        self._send_command(msg)
+
+    def get_hht_trig_output(self) -> bool:
+
+        msg = Message()
+        msg.id = 41
+        msg.ctrl = 0
+
+        response = self._send_command(msg)
+        return bool(struct.unpack_from('B', response.params, 0)[0])
+
     def move_to(self, x, y, z, r=0., mode=MODE_PTP.MOVJ_XYZ):
         return self._extract_cmd_index(self._set_ptp_cmd(x, y, z, r, mode))
 
