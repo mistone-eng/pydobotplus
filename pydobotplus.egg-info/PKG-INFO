@@ -4,7 +4,7 @@ Version: 0.1.0
 Summary: Python library for Dobot Magician upgraded
 Home-page: https://github.com/sammydick22/pydobotplus
 Author: sammydick22
-Author-email: imaterna@fit.vut.cz
+Author-email: nah
 Keywords: dobot,magician,robotics,m1
 Description-Content-Type: text/markdown
 License-File: LICENSE.txt
