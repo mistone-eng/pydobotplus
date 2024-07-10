@@ -11,7 +11,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     author='sammydick22',
-    author_email='nah',
+    author_email='sjeother@gmail.com',
     url='https://github.com/sammydick22/pydobotplus',
     keywords=['dobot', 'magician', 'robotics', 'm1'],
     classifiers=[],
