@@ -15,9 +15,12 @@ pip install pydobotplus
 
 ```python
 from serial.tools import list_ports
-from pydobotplus import Dobot, CustomPosition
+from dobotplus import Dobot
 
-port = list_ports.comports()[0].device
+available_ports = list_ports.comports()
+print(f'available ports: {[x.device for x in available_ports]}')
+port = available_ports[2].device
+
 device = Dobot(port=port)
 
 # Create a custom position
