@@ -1,17 +1,27 @@
+import pydobot
+import math
+import struct
+from pydobot.message import Message
 import struct
 import math
 import logging
 from enum import IntEnum
 from threading import RLock
 from typing import NamedTuple, Set, Optional
-
+import time
 import serial
 from serial.tools import list_ports
-from _collections import deque
+from collections import deque
 
-from pydobot.message import Message
 
 MAX_QUEUE_LEN = 32
+
+class CustomPosition(object):
+    def __init__(self, x = None, y = None, z = None, r = None):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.r = r
 
 
 class MODE_PTP(IntEnum):
@@ -237,14 +247,27 @@ class Dobot:
             self._ser.close()
         self.logger.debug('pydobot: %s closed' % self._ser.name)
 
-    def _send_command(self, msg) -> Message:
+    def _send_command(self, msg, wait = False) -> Message:
         with self._lock:
             self._ser.reset_input_buffer()
             self._send_message(msg)
             msg = self._read_message()
         if msg is None:
             raise DobotException("No response!")
+        if not wait:
+            return msg
+        
+        expected_idx = struct.unpack_from('L', msg.params, 0)[0]
+        while True:
+            current_idx = self._get_queued_cmd_current_index()
+
+            if current_idx != expected_idx:
+                time.sleep(0.1)
+                continue
+            break
         return msg
+        
+        
 
     def _send_message(self, msg) -> None:
 
@@ -376,7 +399,7 @@ class Dobot:
         msg.params.extend(bytearray(struct.pack('f', acceleration)))
         return self._send_command(msg)
 
-    def _set_ptp_cmd(self, x, y, z, r, mode):
+    def _set_ptp_cmd(self, x, y, z, r, mode, wait):
         msg = Message()
         msg.id = 84
         msg.ctrl = 0x03
@@ -386,7 +409,7 @@ class Dobot:
         msg.params.extend(bytearray(struct.pack('f', y)))
         msg.params.extend(bytearray(struct.pack('f', z)))
         msg.params.extend(bytearray(struct.pack('f', r)))
-        return self._send_command(msg)
+        return self._send_command(msg, wait)
 
     def _set_end_effector_suction_cup(self, enable=False):
         msg = Message()
@@ -604,8 +627,6 @@ class Dobot:
         response = self._send_command(msg)
         return bool(struct.unpack_from('B', response.params, 0)[0])
 
-    def move_to(self, x, y, z, r=0., mode=MODE_PTP.MOVJ_XYZ):
-        return self._extract_cmd_index(self._set_ptp_cmd(x, y, z, r, mode))
 
     def go_arc(self, x, y, z, r, cir_x, cir_y, cir_z, cir_r):
         return self._extract_cmd_index(self._set_arc_cmd(x, y, z, r, cir_x, cir_y, cir_z, cir_r))
@@ -631,7 +652,7 @@ class Dobot:
 
     def conveyor_belt(self, speed, direction=1, interface=0):
         if 0.0 <= speed <= 1.0 and (direction == 1 or direction == -1):
-            motor_speed = 70 * speed * STEP_PER_CIRCLE / MM_PER_CIRCLE * direction
+            motor_speed = int(50 * speed * STEP_PER_CIRCLE / MM_PER_CIRCLE * direction)
             self._set_stepper_motor(motor_speed, interface)
         else:
             raise DobotException("Wrong Parameter")
@@ -651,13 +672,6 @@ class Dobot:
             msg.params.extend(bytearray([0x00]))
         msg.params.extend(bytearray(struct.pack('i', speed)))
         return self._send_command(msg)
-
-    def conveyor_belt_distance(self, speed, distance, direction=1, interface=0):
-        if 0.0 <= speed <= 100.0 and (direction == 1 or direction == -1):
-            motor_speed = speed * STEP_PER_CIRCLE / MM_PER_CIRCLE * direction
-            self._set_stepper_motor_distance(motor_speed, distance, interface)
-        else:
-            raise DobotException("Wrong Parameter")
 
     def _set_stepper_motor_distance(self, speed, distance, interface=0, motor_control=True):
         msg = Message()
@@ -703,32 +717,6 @@ class Dobot:
         return self._send_command(msg)
 
     def engrave(self, image, pixel_size, low=0.0, high=40.0, velocity=5, acceleration=5, actual_acceleration=5):
-        """
-        Shade engrave the given image.
-        :param image: NumPy array representing the image. Should be 8 bit grayscale image.
-        :param pixel_size: Pixel size in mm.
-        :param low: Image values will be scaled to range of <low, high>.
-        :param high: dtto
-        :param velocity: Maximum junction velocity (CPParams).
-        :param acceleration: Maximum planned accelerations (CPParams).
-        :param actual_acceleration: Maximum actual acceleration, used in non-real-time mode.
-        :return:
-
-        Example usage:
-
-        >>> from PIL import Image
-        >>> import numpy as np
-        >>> d = Dobot()
-        >>> im = Image.open("image.jpg")
-        >>> im = im.convert("L")
-        >>> im = np.array(im)
-
-        >>> x, y = d.get_pose().position[0:2]
-        >>> d.wait_for_cmd(d.move_to(x, y, -74.0))
-
-        >>> d.engrave(im, 0.1)
-        """
-
         image = image.astype("float64")
         image = 255.0 - image
         image = (image - image.min()) / (image.max() - image.min()) * (high - low) + low
@@ -766,13 +754,97 @@ class Dobot:
                     y_ofs = (len(row)-1 - col_idx) * pixel_size
 
                 indexes.append(
-                    self._extract_cmd_index(self._set_cple_cmd(x + row_idx * pixel_size,
-                                                               y + y_ofs,
-                                                               z,
-                                                               ld, True)))
+                    self._extract_cmd_index(self._set_cple_cmd(x + row_idx * pixel_size, y + y_ofs, z, ld, True)))
 
                 # then feed it as necessary to keep it almost full
                 while not stopped and len(indexes) > MAX_QUEUE_LEN-12:
                     self.wait_for_cmd(indexes.popleft())
 
         self.wait_for_cmd(self.laze(0, False))
+        
+    
+    PORT_GP1 = 0x00
+    PORT_GP2 = 0x01
+    PORT_GP4 = 0x02
+    PORT_GP5 = 0x03
+
+    def conveyor_belt_distance(self, speed_mm_per_sec, distance_mm, direction=1, interface=0):
+        if speed_mm_per_sec > 100:
+            raise pydobot.dobot.DobotException("Speed must be <= 100 mm/s")
+
+
+        MM_PER_REV = 34 * math.pi  # Seems to actually be closer to 36mm when measured but 34 works better
+        STEP_ANGLE_DEG = 1.8
+        STEPS_PER_REV = 360.0 / STEP_ANGLE_DEG * 10.0 * 16.0 / 2.0  # Spec sheet says that it can do 1.8deg increments, no idea what the 10 * 16 / 2 fuck factor is....
+        distance_steps = distance_mm / MM_PER_REV * STEPS_PER_REV
+        speed_steps_per_sec = speed_mm_per_sec / MM_PER_REV * STEPS_PER_REV * direction
+        return self._extract_cmd_index(self._set_stepper_motor_distance(int(speed_steps_per_sec), int(distance_steps), interface))
+
+
+
+    def set_color(self, enable=True, port=PORT_GP2, version=0x1):
+        msg = Message()
+        msg.id = 137
+        msg.ctrl = 0x03
+        msg.params = bytearray([])
+        msg.params.extend(bytearray([int(enable)]))
+        msg.params.extend(bytearray([port]))
+        msg.params.extend(bytearray([version]))  # Version1=0, Version2=1
+        return self._extract_cmd_index(self._send_command(msg))
+
+    def get_color(self, port=PORT_GP2, version=0x1):
+        msg = Message()
+        msg.id = 137
+        msg.ctrl = 0x00
+        msg.params = bytearray([])
+        msg.params.extend(bytearray([port]))
+        msg.params.extend(bytearray([0x01]))
+        msg.params.extend(bytearray([version]))  # Version1=0, Version2=1
+        response = self._send_command(msg)
+        print(response)
+        r = struct.unpack_from('?', response.params, 0)[0]
+        g = struct.unpack_from('?', response.params, 1)[0]
+        b = struct.unpack_from('?', response.params, 2)[0]
+        return [r, g, b]
+    
+    def set_ir(self, enable=True, port=PORT_GP4):
+        msg = Message()
+        msg.id = 138
+        msg.ctrl = 0x02
+        msg.params = bytearray([])
+        msg.params.extend(bytearray([int(enable)]))
+        msg.params.extend(bytearray([port]))
+        return self._extract_cmd_index(self._send_command(msg))
+
+    def get_ir(self, port=PORT_GP4):
+        msg = Message()
+        msg.id = 138
+        msg.ctrl = 0x00
+        msg.params = bytearray([])
+        msg.params.extend(bytearray([port]))
+        response = self._send_command(msg)
+        state = struct.unpack_from('?', response.params, 0)[0]
+        return state
+    
+    def move_rel(self, x=0, y=0, z=0, r=0, wait = True):
+        (xInit, yInit, zInit, rInit) = self.get_pose().position
+        self.move_to(xInit+x, yInit+y, zInit+z, rInit+r, wait)
+        
+    
+    def move_to(self, x=None, y=None, z=None, r=0, wait = True, mode=None, position=None):
+        if position is not None:
+            x, y, z, r = position.x, position.y, position.z, position.r
+        elif x is None and y is None and z is None:
+            raise ValueError("Either a Position object or x, y, z coordinates must be provided")
+        
+        current_pose = self.get_pose().position
+        if x is None: x = current_pose.x
+        if y is None: y = current_pose.y
+        if z is None: z = current_pose.z
+        if r is None: r = current_pose.r
+        print(current_pose)
+        
+        if mode is None:
+            mode = MODE_PTP.MOVJ_XYZ  # Use default mode if not provided
+            
+        return self._extract_cmd_index(self._set_ptp_cmd(x, y, z, r, mode, wait = wait))

@@ -4,10 +4,10 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name='pydobot2',
+    name='pydobotplus',
     packages=['pydobot'],
     version='0.1.0',
-    description='Python library for Dobot Magician',
+    description='Python library for Dobot Magician upgraded',
     long_description=long_description,
     long_description_content_type='text/markdown',
     author='Zdenek Materna',
