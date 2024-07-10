@@ -6,6 +6,7 @@ An extended Python library for controlling the Dobot Magician.
 
 Install the driver from [Silicon Labs](https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers).
 
+Run:
 ```sh
 pip install pydobotplus
 ```
