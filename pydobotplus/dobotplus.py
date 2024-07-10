@@ -1,7 +1,7 @@
-import pydobot
+import pydobotplus
 import math
 import struct
-from pydobot.message import Message
+from pydobotplus.message import Message
 import struct
 import math
 import logging
@@ -770,7 +770,7 @@ class Dobot:
 
     def conveyor_belt_distance(self, speed_mm_per_sec, distance_mm, direction=1, interface=0):
         if speed_mm_per_sec > 100:
-            raise pydobot.dobot.DobotException("Speed must be <= 100 mm/s")
+            raise pydobotplus.dobot.DobotException("Speed must be <= 100 mm/s")
 
 
         MM_PER_REV = 34 * math.pi  # Seems to actually be closer to 36mm when measured but 34 works better
