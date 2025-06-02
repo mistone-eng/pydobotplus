@@ -848,3 +848,47 @@ class Dobot:
             mode = MODE_PTP.MOVJ_XYZ  # Use default mode if not provided
             
         return self._extract_cmd_index(self._set_ptp_cmd(x, y, z, r, mode, wait = wait))
+    
+    def home(self):
+        """Soft home - moves to a safe predefined center location."""
+        self._set_queued_cmd_clear()
+        self._set_queued_cmd_start_exec()
+        self.move_to(x=200.0, y=0.0, z=70.0, r=0.0, wait=True)
+
+    def reset(self):
+        """Returns to home and opens gripper."""
+        self.home()
+        self.grip(False)
+
+    def pickOrPlace(self, x, y, z, r=0.0, do_pick=True):
+        """
+        Perform either a pick or a place operation:
+        - Moves first in XY at a safe Z height.
+        - Descends Z to target.
+        - Grips or releases based on do_pick flag.
+        - Lifts Z after action.
+        """
+        safe_z = 50.0  # Adjust if needed for your workspace
+
+        # Get current position
+        current = self.get_pose().position
+        current_x, current_y, current_z, current_r = current.x, current.y, current.z, current.r
+
+        # 1. If Z is low, lift to safe height before moving XY
+        if current_z < safe_z:
+            self.move_to(x=current_x, y=current_y, z=safe_z, r=current_r, wait=True)
+
+        # 2. Move XY at safe Z
+        self.move_to(x=x, y=y, z=safe_z, r=r, wait=True)
+
+        # 3. Lower to target Z
+        self.move_to(x=x, y=y, z=z, r=r, wait=True)
+
+        # 4. Gripper action
+        self.grip(do_pick)
+        time.sleep(1)  # Short hold time
+
+        # 5. Lift back to safe height
+        self.move_to(x=x, y=y, z=safe_z, r=r, wait=True)
+
+        print(f"[ACTION] {'Picked' if do_pick else 'Placed'} object at ({x}, {y}, {z})")
