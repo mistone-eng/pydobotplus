@@ -13,7 +13,6 @@ import serial
 from serial.tools import list_ports
 from collections import deque
 
-
 MAX_QUEUE_LEN = 32
 
 class CustomPosition(object):
