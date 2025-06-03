@@ -1,6 +1,6 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: pydobotplus
-Version: 0.1.2
+Version: 0.1.3
 Summary: Python library for Dobot Magician upgraded
 Home-page: https://github.com/sammydick22/pydobotplus
 Author: sammydick22
@@ -9,6 +9,15 @@ Keywords: dobot,magician,robotics,m1
 Description-Content-Type: text/markdown
 License-File: LICENSE.txt
 Requires-Dist: pyserial==3.4
+Dynamic: author
+Dynamic: author-email
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: summary
 
 # pydobotplus
 
@@ -27,7 +36,7 @@ pip install pydobotplus
 
 ```python
 from serial.tools import list_ports
-from dobotplus import Dobot
+from pydobotplus import Dobot, CustomPosition
 
 available_ports = list_ports.comports()
 print(f'available ports: {[x.device for x in available_ports]}')
