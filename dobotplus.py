@@ -1,7 +1,7 @@
-import pydobotplus
+import external.pydobotplus as pydobotplus
 import math
 import struct
-from pydobotplus.message import Message
+from external.pydobotplus.message import Message
 import struct
 import math
 import logging
