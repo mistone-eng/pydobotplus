@@ -10,6 +10,7 @@ from threading import RLock
 from typing import NamedTuple, Set, Optional
 import time
 import serial
+import os
 from serial.tools import list_ports
 from collections import deque
 
