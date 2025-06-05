@@ -650,14 +650,14 @@ class Dobot:
         self.wait_for_cmd(self._extract_cmd_index(self._set_ptp_common_params(velocity, acceleration)))
         self.wait_for_cmd(self._extract_cmd_index(self._set_ptp_coordinate_params(velocity, acceleration)))
 
-    def conveyor_belt(self, speed, direction=1, interface=0):
+    def conveyor_belt(self, speed, direction=1, interface=1):
         if 0.0 <= speed <= 1.0 and (direction == 1 or direction == -1):
             motor_speed = int(50 * speed * STEP_PER_CIRCLE / MM_PER_CIRCLE * direction)
             self._set_stepper_motor(motor_speed, interface)
         else:
             raise DobotException("Wrong Parameter")
 
-    def _set_stepper_motor(self, speed, interface=0, motor_control=True):
+    def _set_stepper_motor(self, speed, interface=1, motor_control=True):
         msg = Message()
         msg.id = 0x87
         msg.ctrl = 0x03
